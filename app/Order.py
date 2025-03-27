@@ -1,6 +1,8 @@
-from dataclasses import dataclass, field
 from enum import Enum
 import uuid
+from pydantic import BaseModel, model_validator, Field
+from datetime import datetime
+
 
 class Status(Enum):
     PENDING = 1 
@@ -10,41 +12,48 @@ class Status(Enum):
     CANCELLED = 5
     
     def __str__(self):
-        return self.name
+        return str(self.name)
 
 
 item_name_to_uuid = {}
-
-@dataclass
-class Item():
+class Item(BaseModel):
     name: str
     quantity: int
     price_per_unit: float
-    item_id: str = field(init=False)
+    item_id: str = Field(init=False)
 
-    def __post_init__(self):
-        if self.name not in item_name_to_uuid.keys():
-            item_name_to_uuid[self.name] = uuid.uuid4()
+    @model_validator(mode="before")
+    def set_iteam_id(cls, values):
+        name = values.get("name")
+        if name:
+            if name not in item_name_to_uuid.keys():
+                item_name_to_uuid[name] = uuid.uuid4()
         
-        self.item_id = str(item_name_to_uuid[self.name])
+            values["item_id"] = str(item_name_to_uuid[name])
+        return values
+    
 
 
-@dataclass
-class Order:
+
+class Order(BaseModel):
     customer_name: str
     items: list[Item]
     status: Status
-    total_price: float = field(init=False)  # Don't provide it in the constructor
-    order_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    order_id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # class Config:
+    #     json_encoders = {
+    #         Status: lambda v: str(v)
+    #     }
 
 
-    def __post_init__(self):
-        self.total_price = sum([item.price_per_unit * item.quantity for item in self.items])
-
-from datetime import datetime
-
-@dataclass
-class StatusUpdateEvent:
+class StatusUpdateEvent(BaseModel):
     order_id: str
     new_status: Status
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # class Config:
+    #     json_encoders = {
+    #         Status: lambda v: str(v)
+    #     }
