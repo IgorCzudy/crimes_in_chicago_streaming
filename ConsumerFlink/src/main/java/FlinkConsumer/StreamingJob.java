@@ -18,13 +18,33 @@
 
 package FlinkConsumer;
 
+import Agregation.AnomalyDetector;
 import Deserializer.JSONValueDeserializationSchema;
+import Dto.AgregatedCrimeRecord;
+import Dto.AnomaliaRecord;
+import Dto.CrimeKey;
 import Dto.CrimeRecord;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.connector.jdbc.*;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.util.Collector;
+import org.apache.flink.connector.jdbc.JdbcSink;
+
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class StreamingJob {
 
@@ -44,10 +64,150 @@ public class StreamingJob {
 					.setValueOnlyDeserializer(new JSONValueDeserializationSchema()) // Custom deserialization for Order
 					.build();
 
-		DataStream<CrimeRecord> transactionStream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
+				WatermarkStrategy<CrimeRecord> watermarkStrategy =
+				WatermarkStrategy.<CrimeRecord>forMonotonousTimestamps()
+						.withTimestampAssigner((record, ts) -> {
+							String dateString = record.getDate();
+							DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+							LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
+							return dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+						});
 
-		transactionStream.print();
+		DataStream<CrimeRecord> crimeRecordStream = env.fromSource(source, watermarkStrategy, "Kafka Source");
+
+		DataStream<AgregatedCrimeRecord> agregatedCrimeRecord = crimeRecordStream
+				.keyBy(CrimeRecord::getDistrict) // group by district
+				.window(TumblingEventTimeWindows.of(Time.days(1)))//co minute TumblingProcessingTimeWindows
+				.apply(new WindowFunction<CrimeRecord, AgregatedCrimeRecord, Integer, TimeWindow>() {
+
+					@Override
+					public void apply(Integer district, TimeWindow timeWindow, Iterable<CrimeRecord> iterable, Collector<AgregatedCrimeRecord> collector) throws Exception {
+
+						int crimeSum = 0;
+						int domesticCrimeSum = 0;
+						for (CrimeRecord record : iterable) {
+							crimeSum++;
+							if (record.isDomestic()) domesticCrimeSum++;
+						}
+
+						long windowEnd = timeWindow.getEnd();
+						Instant instantEnd = Instant.ofEpochMilli(windowEnd);
+						ZonedDateTime zdtEnd = instantEnd.atZone(ZoneId.systemDefault());
+						String windowEndDate = zdtEnd.toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+
+						long windowStrart = timeWindow.getStart();
+						Instant instantStart = Instant.ofEpochMilli(windowStrart);
+						ZonedDateTime zdtStart = instantStart.atZone(ZoneId.systemDefault());
+						String windowEndStart = zdtStart.toLocalDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+
+						AgregatedCrimeRecord result = new AgregatedCrimeRecord(crimeSum, domesticCrimeSum, district, windowEndStart, windowEndDate);
+						collector.collect(result);
+					}
+
+				});
+
+
+		JdbcExecutionOptions executionOptions = new JdbcExecutionOptions.Builder()
+				.withBatchSize(1000)
+				.withBatchIntervalMs(200)
+				.withMaxRetries(5)
+				.build();
+
+		JdbcConnectionOptions connectionOptions = new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+				.withUrl("jdbc:postgresql://localhost:5432/crime_db")
+						.withDriverName("org.postgresql.Driver")
+						.withUsername("flink_user")
+						.withPassword("flink_user")
+						.build();
+
+				agregatedCrimeRecord.addSink(JdbcSink.sink(
+				"INSERT INTO crime_per_district_day " +
+					"(total_crimes, domestic_crimes, district, window_start, window_end) "+
+					"VALUES (?, ?, ?, ?, ?) " +
+					"ON CONFLICT (district, window_start) DO UPDATE SET " +
+					"total_crimes = EXCLUDED.total_crimes, " +
+					"domestic_crimes = EXCLUDED.domestic_crimes, " +
+					"window_end = EXCLUDED.window_end",
+
+				(statement, aggregated) -> {
+					statement.setInt(1, aggregated.getCrimeSum());
+					statement.setInt(2, aggregated.getDomesticCrimeSum());
+					statement.setInt(3, aggregated.getDistrict());
+
+					LocalDateTime start = LocalDateTime.parse(
+							aggregated.getWindowStartDate(),
+							DateTimeFormatter.ISO_LOCAL_DATE_TIME
+					);
+					statement.setTimestamp(4, Timestamp.valueOf(start));
+
+					LocalDateTime end = LocalDateTime.parse(
+							aggregated.getWindowEndDate(),
+							DateTimeFormatter.ISO_LOCAL_DATE_TIME
+					);
+					statement.setTimestamp(5, Timestamp.valueOf(end));
+
+				},
+				executionOptions,
+				connectionOptions
+		)).name("AggregatedCrimeRecord to DB");
+		agregatedCrimeRecord.print();
+
+
+		DataStream<AnomaliaRecord> anomaliaRecordDataStream = crimeRecordStream
+				.keyBy(record -> CrimeKey.builder()
+								.primaryType(record.getPrimaryType())
+								.district(record.getDistrict())
+								.build())
+				.window(SlidingEventTimeWindows.of(
+					Time.hours(5),
+					Time.minutes(30)))
+				.process(new AnomalyDetector(14));
+
+
+		anomaliaRecordDataStream.addSink(JdbcSink.sink(
+				"INSERT INTO crimes_anomaly " +
+				"(total_crimes, primary_type , district , window_start , window_end ) " +
+				"VALUES (?,?,?,?,?) " +
+				"ON CONFLICT (primary_type, district, window_start) DO UPDATE SET " +
+				"total_crimes = EXCLUDED.total_crimes, " +
+				"window_end = EXCLUDED.window_end",
+
+				((preparedStatement, anomaliaRecord) -> {
+					preparedStatement.setInt(1, anomaliaRecord.getCountOfCrimes());
+					preparedStatement.setString(2, anomaliaRecord.getPrimaryType());
+					preparedStatement.setInt(3, anomaliaRecord.getDistrict());
+
+
+					LocalDateTime start = LocalDateTime.parse(
+							anomaliaRecord.getWindowStartData(),
+							DateTimeFormatter.ISO_LOCAL_DATE_TIME
+					);
+					preparedStatement.setTimestamp(4, Timestamp.valueOf(start));
+
+
+					LocalDateTime end = LocalDateTime.parse(
+							anomaliaRecord.getWindowStartData(),
+							DateTimeFormatter.ISO_LOCAL_DATE_TIME
+					);
+					preparedStatement.setTimestamp(5, Timestamp.valueOf(end));
+				}),
+				executionOptions,
+				connectionOptions
+		)).name("Anomaly to DB");
+		anomaliaRecordDataStream.print();
+
+
+//		CREATE USER flink_user WITH PASSWORD 'flink_user';
+//		CREATE USER flink_user WITH PASSWORD 'flink_user';
+//		CREATE DATABASE crime_db;
+//		CREATE TABLE crime_per_district_day (total_crimes INT, domestic_crimes INT, district INT, window_start TIMESTAMP, window_end TIMESTAMP, PRIMARY KEY (district, window_start));
+//		CREATE TABLE crimes_anomaly (total_crimes INT, primary_type TEXT, district INT, window_start TIMESTAMP, window_end TIMESTAMP, PRIMARY KEY (primary_type, district, window_start));
+
+//		DELETE FROM crime_per_district_day;
+
+
 
 		env.execute("Flink Streaming Java API Skeleton");
 	}
+
 }
