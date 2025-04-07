@@ -20,14 +20,23 @@ package FlinkConsumer;
 
 import Agregation.AnomalyDetector;
 import Deserializer.JSONValueDeserializationSchema;
-import Dto.AgregatedCrimeRecord;
-import Dto.AnomaliaRecord;
-import Dto.CrimeKey;
-import Dto.CrimeRecord;
+import Deserializer.CrimeRecordSerializer;
+import Dto.*;
+
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.connector.elasticsearch.sink.Elasticsearch7SinkBuilder;
+import org.apache.flink.connector.elasticsearch.sink.ElasticsearchSink;
+import org.apache.flink.connector.elasticsearch.sink.ElasticsearchSinkBuilderBase;
 import org.apache.flink.connector.jdbc.*;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.elasticsearch7.shaded.org.apache.http.HttpHost;
+
+import org.apache.flink.elasticsearch7.shaded.org.elasticsearch.action.index.IndexRequest;
+import org.apache.flink.elasticsearch7.shaded.org.elasticsearch.client.Requests;
+import org.apache.flink.elasticsearch7.shaded.org.elasticsearch.common.geo.GeoPoint;
+import org.apache.flink.elasticsearch7.shaded.org.elasticsearch.common.xcontent.XContentType;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
@@ -197,6 +206,27 @@ public class StreamingJob {
 		anomaliaRecordDataStream.print();
 
 
+
+		crimeRecordStream
+				.map(crimeRecord -> {
+//					String dateString = crimeRecord.getDate();
+//					DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+//					LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
+//					long epochMillis = dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+//					GeoPoint point = new GeoPoint(crimeRecord.getLatitude(), crimeRecord.getLongitude()); // London
+					return new Location(crimeRecord.getLatitude(), crimeRecord.getLongitude());
+				})
+				.sinkTo(
+						new Elasticsearch7SinkBuilder<Location>()
+								.setHosts(new HttpHost("localhost", 9200, "http"))
+								.setEmitter((location, context, indexer) -> {
+									IndexRequest indexRequest = Requests.indexRequest()
+											.index("location")
+											.source(CrimeRecordSerializer.convertCrimeToJson(location), XContentType.JSON);
+									indexer.add(indexRequest);
+								})
+								.build()
+				).name("Elasticsearch Sink");
 //		CREATE USER flink_user WITH PASSWORD 'flink_user';
 //		CREATE USER flink_user WITH PASSWORD 'flink_user';
 //		CREATE DATABASE crime_db;

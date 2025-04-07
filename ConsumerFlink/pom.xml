@@ -48,6 +48,17 @@
 	</repositories>
 
 	<dependencies>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-sql-connector-elasticsearch7</artifactId>
+			<version>3.0.1-1.17</version>
+		</dependency><!-- Add logging framework, to produce console output when running in the IDE. -->
+<!--		<dependency>-->
+<!--			<groupId>org.apache.flink</groupId>-->
+<!--			<artifactId>flink-connector-elasticsearch7</artifactId>-->
+<!--			<version>${flink.version}</version>-->
+<!--		</dependency>-->
+
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
