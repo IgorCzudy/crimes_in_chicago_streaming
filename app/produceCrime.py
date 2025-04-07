@@ -1,38 +1,7 @@
 from confluent_kafka import Producer
-import time
-import json
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
 import csv
-
-class CrimeRecord(BaseModel):
-    ID: int
-    Case_Number: str
-    Date: datetime
-    Block: str
-    IUCR: str
-    Primary_Type: str
-    Description: str
-    Location_Description: Optional[str]
-    Arrest: bool
-    Domestic: bool
-    Beat: int
-    District: Optional[int]
-    Ward: Optional[int]
-    Community_Area: Optional[int]
-    FBI_Code: str
-    X_Coordinate: Optional[int]
-    Y_Coordinate: Optional[int]
-    Year: int
-    Updated_On: datetime
-    Latitude: Optional[float]
-    Longitude: Optional[float]
-    Location: Optional[str]
-
-    class Config:
-        arbitrary_types_allowed = True
-
+from CrimeRecord import CrimeRecord
 
 def deliver_report(err, msg):
     if err is not None:
@@ -81,12 +50,10 @@ def main():
             value = crimeRecord_json.encode('utf-8'),
             callback=deliver_report)
 
-        time.sleep(0.01)
+        # time.sleep(0.6)
         p.poll(0)
 
     p.flush()            
-
-
 
 
         
