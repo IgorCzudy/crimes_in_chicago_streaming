@@ -86,7 +86,7 @@ public class StreamingJob {
 
 		DataStream<AgregatedCrimeRecord> agregatedCrimeRecord = crimeRecordStream
 				.keyBy(CrimeRecord::getDistrict) // group by district
-				.window(TumblingEventTimeWindows.of(Time.days(1)))//co minute TumblingProcessingTimeWindows
+				.window(TumblingEventTimeWindows.of(Time.days(1)))//Time.minutes(30)
 				.apply(new WindowFunction<CrimeRecord, AgregatedCrimeRecord, Integer, TimeWindow>() {
 
 					@Override
@@ -125,8 +125,8 @@ public class StreamingJob {
 		JdbcConnectionOptions connectionOptions = new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
 				.withUrl("jdbc:postgresql://localhost:5432/crime_db")
 						.withDriverName("org.postgresql.Driver")
-						.withUsername("flink_user")
-						.withPassword("flink_user")
+						.withUsername("admin")
+						.withPassword("admin")
 						.build();
 
 				agregatedCrimeRecord.addSink(JdbcSink.sink(
@@ -209,11 +209,6 @@ public class StreamingJob {
 
 		crimeRecordStream
 				.map(crimeRecord -> {
-//					String dateString = crimeRecord.getDate();
-//					DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
-//					LocalDateTime dateTime = LocalDateTime.parse(dateString, formatter);
-//					long epochMillis = dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-//					GeoPoint point = new GeoPoint(crimeRecord.getLatitude(), crimeRecord.getLongitude()); // London
 					return new Location(crimeRecord.getLatitude(), crimeRecord.getLongitude());
 				})
 				.sinkTo(
@@ -227,14 +222,6 @@ public class StreamingJob {
 								})
 								.build()
 				).name("Elasticsearch Sink");
-//		CREATE USER flink_user WITH PASSWORD 'flink_user';
-//		CREATE USER flink_user WITH PASSWORD 'flink_user';
-//		CREATE DATABASE crime_db;
-//		CREATE TABLE crime_per_district_day (total_crimes INT, domestic_crimes INT, district INT, window_start TIMESTAMP, window_end TIMESTAMP, PRIMARY KEY (district, window_start));
-//		CREATE TABLE crimes_anomaly (total_crimes INT, primary_type TEXT, district INT, window_start TIMESTAMP, window_end TIMESTAMP, PRIMARY KEY (primary_type, district, window_start));
-
-//		DELETE FROM crime_per_district_day;
-
 
 
 		env.execute("Flink Streaming Java API Skeleton");
