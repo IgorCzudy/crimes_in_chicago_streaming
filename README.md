@@ -6,7 +6,7 @@ It streams and processes the [Chicago Crime dataset](https://www.kaggle.com/data
 
 
 <div style="text-align: center;">
-  <img src="img/diagram.png" alt="pipeline diagram" width="400">
+  <img src="img/diagram.png" alt="pipeline diagram" width="700">
 </div>
 
 ## Implementation deatails
@@ -146,10 +146,10 @@ PUT /locationv2
 ```
 Later create a new index with `locationv2`.
 <div style="text-align: center;">
-  <img src="img/image1.png" alt="Colorized output image" width="400">
+  <img src="img/image1.png" alt="Colorized output image" width="600">
 </div>
 
 Display crimes on the map. 
 <div style="text-align: center;">
-  <img src="img/image4.png" alt="Colorized output image" width="400">
+  <img src="img/image4.png" alt="Colorized output image" width="700">
 </div>
